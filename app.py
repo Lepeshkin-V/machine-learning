@@ -1,65 +1,111 @@
-import keras
-import numpy as np 
-import pandas as pd 
-import matplotlib.pyplot as plt
-import os
-import io
-import shutil
-from keras.applications.imagenet_utils import preprocess_input
-import tensorflow as tf
-from keras.preprocessing.image import ImageDataGenerator
-from keras.preprocessing import image
-from tensorflow.keras.applications import DenseNet201
-from keras import models
-from keras import layers
-from io import BytesIO, StringIO
-from PIL import Image, ImageOps
 import streamlit as st
-
-model = keras.models.load_model('model.h5')
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import pickle
+from xgboost import XGBRegressor
+import numpy as np
 
 def main():
-    
-    page = st.sidebar.selectbox("Choose a page", ["Model description", "Prediction on your file"])
-    if page == "Model description":
-        st.header("Dogs and Cats model")
-        st.write("This model predicts what is shown in the picture: a cat or a dog. If the cat is 0, if the dog is 1.")
-        col1, col2, col3 = st.beta_columns(3)
-        i=0
-        for dirname, _, filenames in os.walk('../deploy/data/pics'):
-            for filename in filenames:
-                img = plt.imread(os.path.join(dirname, filename))
-                if i<4:
-                    col1.image(img,use_column_width=True)
-                elif i>=4 and i<8:
-                    col2.image(img,use_column_width=True)
-                else:
-                    col3.image(img,use_column_width=True)
-                i+=1
-    
-    
-    elif page == "Prediction on your file":
-        st.title("Prediction with model on your picture")
-        img_data = st.file_uploader("Upload file", type=["jpg", "png"])
-        
-        if img_data is not None:
-            uploaded_image = Image.open(img_data)
-            st.image(uploaded_image)
+  train, train_pp = load_train()
+  test, test_pp = load_test()
+  sub = load_sub()
+  colors = ['red', 'green', 'blue', 'purple', 'orange']
 
-            size = (150, 150)
-            image = ImageOps.fit(uploaded_image, size, Image.ANTIALIAS)
-            img = np.asarray(image)
-            img_reshape = img[np.newaxis,...]
-            pred = model.predict(img_reshape)
+  page = st.sidebar.selectbox("Выберите страницу", ["Соревнование", "Модели"])
+    
+  if page == "Соревнование":
+    st.title("House Prices - Advanced Regression Techniques")
+    st.write("Задача данного соревнования является задачей регрессии. Предлагается по имеющимся семидесяти девяти признакам предсказать цену жилья в городе Эймс, штат Айова.")
+    st.write("Признаки включают в себя тип зоны (_MSZoning_), наличие коммуникаций (_Utilities_), состояние дома (_OverallCond_), год постройки (_YearBuilt_) и многие другие.")
+    st.write("Имеются две таблицы – тренировочная выборка train.csv размером 1460 строк и 81 столбец, тестовая выборка без значений целевого признака test.csv размером 1459 строк и 80 столбцов и примеры значений целевого признака sample_submission.csv размером 1459 строк и 2 столбца.")
+    
+    data = st.selectbox("Выберите набор данных", ["train", "test", "sub"])
+    
+    if data == "train":
+      df = train
+      target = train.SalePrice
+      name = "Целевой признак тренировочной выборки"
+    elif data == "test":
+      df = test
+      target = sub.SalePrice
+      name = "Целевой признак тестовой выборки"
+    else:
+      df = sub
+      target = sub.SalePrice
+      name = "Целевой признак тестовой выборки"
+    
+    st.write(df)
+    
+    fig, graph = plt.subplots()
+    plt.title(name)
+    graph = sns.histplot(x=target, kde=True, color=colors[np.random.randint(0, 4)])
+    st.pyplot(fig)
+    
+  elif page == "Модели":
+    st.title("Модели предсказаний")
+    st.write("На этой странице можно обратиться к одной из трёх моделей предсказаний, которые показали наилучший результат: _RandomForestRegressor_, _GradientBoostingRegressor_, _XGBRegressor_")
+    model = st.selectbox("Выберите модель", ["Случайный лес", "Градиентный бустинг", "Экстремальный градиентный бустинг"])
+    
+    if model == "Случайный лес":
+      clf = load_rf()
+    
+    if model == "Градиентный бустинг":
+      clf = load_gbr()
 
-            st.title('Final predict is:')
-            st.write(pred)
-            if pred>0.5:
-                st.write('dog')
-            else:
-                st.write('cat')
-        
-        
+    if model == "Экстремальный градиентный бустинг":
+      clf = load_xgbr()
+
+    st.write("Предсказания, полученные с помощью модели '" + model + "':")
+    pred = clf.predict(test_pp.drop('SalePrice', axis=1))
+    res = pd.DataFrame({
+        "Id": np.arange(1461, 2920, 1),
+        "SalePrice": np.expm1(pred)
+    })
+    st.write(res)
+
+    fig, graph = plt.subplots()
+    plt.title(model)
+    graph = sns.histplot(x=np.expm1(pred), kde=True, color=colors[np.random.randint(0, 4)])
+    st.pyplot(fig)
+
+### data
+@st.cache(allow_output_mutation=True)
+def load_train():
+  df = pd.read_csv("../data/train.csv")
+  df_pp = pd.read_csv("../data/train-pp.csv")
+  return df, df_pp
+
+@st.cache
+def load_test():
+  df = pd.read_csv("../data/test.csv")
+  df_pp = pd.read_csv("../data/test-pp.csv")
+  return df, df_pp
+
+@st.cache
+def load_sub():
+  df = pd.read_csv("../data/sample_submission.csv")
+  return df
+
+### models
+
+#@st.cache
+def load_rf():
+  with open('../models/model_rf.pkl', 'rb') as pkl_file:
+    rf = pickle.load(pkl_file)
+  return rf
+
+@st.cache
+def load_gbr():
+  with open('../models/model_gbr.pkl', 'rb') as pkl_file:
+    gbr = pickle.load(pkl_file)
+  return gbr
+
+@st.cache(hash_funcs={XGBRegressor: id}) #https://github.com/streamlit/streamlit/issues/1456
+def load_xgbr():
+  with open('../models/model_xgbr.pkl', 'rb') as pkl_file:
+    xgbr = pickle.load(pkl_file)
+  return xgbr
 
 if __name__ == "__main__":
-    main()
+  main()
